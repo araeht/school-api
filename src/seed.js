@@ -47,7 +47,7 @@ async function seed() {
                 max: 3,
             });
 
-            await student.addCourses(randomCourses);
+            await student.addCourses(randomCourses); 
         }
 
         console.log('Seeding complete!');
