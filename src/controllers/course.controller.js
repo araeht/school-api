@@ -9,19 +9,6 @@ import db from '../models/index.js';
 
 /**
  * @swagger
- * components:
- *   parameters:
- *     CoursePopulateParam:
- *       in: query
- *       name: populate
- *       schema:
- *         type: string
- *         enum: [teacher, students, all]
- *       description: Include related data (teacher, students, or all)
- */
-
-/**
- * @swagger
  * /courses:
  *   post:
  *     summary: Create a new course
@@ -32,19 +19,19 @@ import db from '../models/index.js';
  *         application/json:
  *           schema:
  *             type: object
- *             required: [title, description, TeacherId]
+ *             required: [title, description, teacherId]
  *             properties:
  *               title:
  *                 type: string
  *               description:
  *                 type: string
- *               TeacherId:
+ *               teacherId:
  *                 type: integer
  *     responses:
  *       201:
- *         description: Course created successfully
+ *         description: Course created
  *       500:
- *         description: Server error
+ *         description: Internal server error
  */
 export const createCourse = async (req, res) => {
     try {
@@ -55,94 +42,99 @@ export const createCourse = async (req, res) => {
     }
 };
 
+
+
+
 /**
  * @swagger
  * /courses:
  *   get:
- *     summary: Get all courses with pagination, sorting, and population
+ *     summary: Get all courses
  *     tags: [Courses]
  *     parameters:
  *       - in: query
- *         name: limit
- *         schema:
- *           type: integer
- *           default: 10
- *           minimum: 1
- *           maximum: 100
- *         description: Number of records per page
- *       - in: query
  *         name: page
- *         schema:
- *           type: integer
- *           default: 1
- *           minimum: 1
+ *         schema: { type: integer, default: 1 }
  *         description: Page number
+ *       - in: query
+ *         name: limit
+ *         schema: { type: integer, default: 10 }
+ *         description: Number of items per page
  *       - in: query
  *         name: sort
  *         schema:
  *           type: string
  *           enum: [asc, desc]
- *           default: desc
- *         description: Sort order by creation date
- *       - $ref: '#/components/parameters/CoursePopulateParam'
+ *           default: asc
+ *         description: Sort order (asc or desc)
+ *       - in: query
+ *         name: sortBy
+ *         schema:
+ *           type: string
+ *           enum: [id, createdAt, updatedAt, teacherId]
+ *           default: id
+ *         description: Sort Course By
+ *       - in: query
+ *         name: teacherId
+ *         schema:
+ *           type: integer
+ *         description: Filter Course with teacher ID
+ *         required: false
+ *       - in: query
+ *         name: populate
+ *         schema:
+ *           type: string
+ *           enum: [none, teacher]
+ *           default: none
+ *         description: Optional. Default is "none" (includes only teacherId). Use "teacher" to include full Teacher details (id, name, department).
  *     responses:
  *       200:
  *         description: List of courses with metadata
- *       400:
- *         description: Invalid parameters
- *       500:
- *         description: Server error
  */
 export const getAllCourses = async (req, res) => {
+    const limit = parseInt(req.query.limit) || 10;
+    const page = parseInt(req.query.page) || 1;
+
+    const sort = req.query.sort === 'desc' ? 'DESC' : 'ASC';
+    const sortBy = ['id', 'createdAt', 'updatedAt', 'teacherId'].includes(req.query.sortBy)
+        ? req.query.sortBy
+        : 'id';
+
+    const where = {};
+    if (req.query.teacherId) {
+        where.teacherId = req.query.teacherId;
+    }
+
+    const populate = (req.query.populate || 'none').toLowerCase();
+
+    const include = [];
+
+    if (populate === 'teacher') {
+        include.push({
+            model: db.Teacher,
+            attributes: ['id', 'name', 'department'],
+        });
+    }
+
     try {
-        // Parse and validate query parameters
-        const limit = parseInt(req.query.limit) || 10;
-        const page = parseInt(req.query.page) || 1;
-        const sort = req.query.sort || 'desc';
-        const populate = req.query.populate;
+        const total = await db.Course.count({ where });
 
-        // Validation
-        if (limit < 1 || limit > 100) {
-            return res.status(400).json({ error: 'Limit must be between 1 and 100' });
-        }
-        if (page < 1) {
-            return res.status(400).json({ error: 'Page must be greater than 0' });
-        }
-        if (!['asc', 'desc'].includes(sort)) {
-            return res.status(400).json({ error: 'Sort must be either asc or desc' });
-        }
-
-        // Build include array for eager loading
-        const includeOptions = [];
-        if (populate) {
-            const populateOptions = populate.split(',').map(p => p.trim());
-            
-            if (populateOptions.includes('teacher') || populateOptions.includes('all')) {
-                includeOptions.push(db.Teacher);
-            }
-            if (populateOptions.includes('students') || populateOptions.includes('all')) {
-                includeOptions.push(db.Student);
-            }
-        }
-
-        // Build query options
-        const queryOptions = {
-            limit: limit,
+        const courses = await db.Course.findAll({
+            limit,
             offset: (page - 1) * limit,
-            order: [['createdAt', sort.toUpperCase()]],
-            ...(includeOptions.length > 0 && { include: includeOptions })
-        };
-
-        // Execute queries
-        const total = await db.Course.count();
-        const courses = await db.Course.findAll(queryOptions);
+            order: [[sortBy, sort]],
+            where,
+            include,
+            attributes: include.length === 0
+                ? ['id', 'title', 'description', 'teacherId', 'createdAt', 'updatedAt']
+                : undefined,
+        });
 
         res.json({
             meta: {
                 totalItems: total,
-                page: page,
+                page,
                 totalPages: Math.ceil(total / limit),
-                limit: limit
             },
             data: courses,
         });
@@ -150,6 +142,9 @@ export const getAllCourses = async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 };
+
+
+
 
 /**
  * @swagger
@@ -161,48 +156,48 @@ export const getAllCourses = async (req, res) => {
  *       - in: path
  *         name: id
  *         required: true
- *         schema: { type: integer }
- *         description: Course ID
- *       - $ref: '#/components/parameters/CoursePopulateParam'
+ *         schema:
+ *           type: integer
+ *       - in: query
+ *         name: populate
+ *         schema:
+ *           type: string
+ *           enum: [none, teacher]
+ *           default: none
+ *         description: >
+ *           _Select (none) only teacherId is include
+ *           _Select (teacher) include with teacher details
  *     responses:
  *       200:
  *         description: Course found
  *       404:
- *         description: Course not found
- *       500:
- *         description: Server error
+ *         description: Not found
  */
 export const getCourseById = async (req, res) => {
     try {
-        const populate = req.query.populate;
-        
-        // Build include array for eager loading
-        const includeOptions = [];
-        if (populate) {
-            const populateOptions = populate.split(',').map(p => p.trim());
-            
-            if (populateOptions.includes('teacher') || populateOptions.includes('all')) {
-                includeOptions.push(db.Teacher);
-            }
-            if (populateOptions.includes('students') || populateOptions.includes('all')) {
-                includeOptions.push(db.Student);
-            }
+        const { id } = req.params;
+        const populate = (req.query.populate || 'none').toLowerCase();
+
+        const include = [];
+
+        if (populate === 'teacher') {
+            include.push({
+                model: db.Teacher,
+                attributes: ['id', 'name', 'department'] // ✅ fixed: only fields that exist
+            });
         }
 
-        const queryOptions = {
-            ...(includeOptions.length > 0 && { include: includeOptions })
-        };
+        const course = await db.Course.findByPk(id, { include });
 
-        const course = await db.Course.findByPk(req.params.id, queryOptions);
-        if (!course) {
-            return res.status(404).json({ message: 'Course not found' });
-        }
-        
+        if (!course) return res.status(404).json({ message: 'Not found' });
+
         res.json(course);
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 };
+
+
 
 /**
  * @swagger
@@ -214,8 +209,8 @@ export const getCourseById = async (req, res) => {
  *       - in: path
  *         name: id
  *         required: true
- *         schema: { type: integer }
- *         description: Course ID
+ *         schema:
+ *           type: integer
  *     requestBody:
  *       required: true
  *       content:
@@ -225,31 +220,37 @@ export const getCourseById = async (req, res) => {
  *             properties:
  *               title:
  *                 type: string
+ *                 example: Introduction to Node.js
  *               description:
  *                 type: string
- *               TeacherId:
+ *                 example: Learn the basics of Node.js and Express.
+ *               teacherId:
  *                 type: integer
+ *                 example: 3
+ *             required:
+ *               - title
  *     responses:
  *       200:
  *         description: Course updated successfully
  *       404:
  *         description: Course not found
  *       500:
- *         description: Server error
+ *         description: Internal server error
  */
 export const updateCourse = async (req, res) => {
     try {
         const course = await db.Course.findByPk(req.params.id);
         if (!course) {
-            return res.status(404).json({ message: 'Course not found' });
+            return res.status(404).json({ message: 'Not found' });
         }
-        
+
         await course.update(req.body);
         res.json(course);
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 };
+
 
 /**
  * @swagger
@@ -261,25 +262,23 @@ export const updateCourse = async (req, res) => {
  *       - in: path
  *         name: id
  *         required: true
- *         schema: { type: integer }
- *         description: Course ID
+ *         schema:
+ *           type: integer
  *     responses:
  *       200:
  *         description: Course deleted successfully
  *       404:
  *         description: Course not found
  *       500:
- *         description: Server error
+ *         description: Internal server error
  */
 export const deleteCourse = async (req, res) => {
     try {
         const course = await db.Course.findByPk(req.params.id);
-        if (!course) {
-            return res.status(404).json({ message: 'Course not found' });
-        }
+        if (!course) return res.status(404).json({ message: 'Course not found' });
         
         await course.destroy();
-        res.json({ message: 'Course deleted successfully' });
+        res.status(200).json({ message: 'Course deleted successfully' });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }

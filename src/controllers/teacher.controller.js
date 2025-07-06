@@ -9,19 +9,6 @@ import db from '../models/index.js';
 
 /**
  * @swagger
- * components:
- *   parameters:
- *     TeacherPopulateParam:
- *       in: query
- *       name: populate
- *       schema:
- *         type: string
- *         enum: [courses, all]
- *       description: Include related data (courses or all)
- */
-
-/**
- * @swagger
  * /teachers:
  *   post:
  *     summary: Create a new teacher
@@ -36,13 +23,15 @@ import db from '../models/index.js';
  *             properties:
  *               name:
  *                 type: string
+ *                 example: John Smith
  *               department:
  *                 type: string
+ *                 example: Mathematics
  *     responses:
  *       201:
  *         description: Teacher created successfully
  *       500:
- *         description: Server error
+ *         description: Internal server error
  */
 export const createTeacher = async (req, res) => {
     try {
@@ -53,101 +42,120 @@ export const createTeacher = async (req, res) => {
     }
 };
 
+
 /**
  * @swagger
  * /teachers:
  *   get:
- *     summary: Get all teachers with pagination, sorting, and population
+ *     summary: Get all teachers
  *     tags: [Teachers]
  *     parameters:
- *       - in: query
- *         name: limit
- *         schema:
- *           type: integer
- *           default: 10
- *           minimum: 1
- *           maximum: 100
- *         description: Number of records per page
  *       - in: query
  *         name: page
  *         schema:
  *           type: integer
  *           default: 1
- *           minimum: 1
  *         description: Page number
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 10
+ *         description: Number of items per page
  *       - in: query
  *         name: sort
  *         schema:
  *           type: string
  *           enum: [asc, desc]
- *           default: desc
- *         description: Sort order by creation date
- *       - $ref: '#/components/parameters/TeacherPopulateParam'
+ *           default: asc
+ *         description: Sort order (asc or desc)
+ *       - in: query
+ *         name: sortBy
+ *         schema:
+ *           type: string
+ *           enum: [id, name, department, createdAt, updatedAt]
+ *           default: id
+ *         description: Sort by field
  *     responses:
  *       200:
  *         description: List of teachers with metadata
- *       400:
- *         description: Invalid parameters
- *       500:
- *         description: Server error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 meta:
+ *                   type: object
+ *                   properties:
+ *                     totalItems:
+ *                       type: integer
+ *                     page:
+ *                       type: integer
+ *                     totalPages:
+ *                       type: integer
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       id:
+ *                         type: integer
+ *                       name:
+ *                         type: string
+ *                       department:
+ *                         type: string
+ *                       createdAt:
+ *                         type: string
+ *                       updatedAt:
+ *                         type: string
+ *                       Courses:
+ *                         type: array
+ *                         items:
+ *                           type: object
+ *                           properties:
+ *                             id:
+ *                               type: integer
+ *                             title:
+ *                               type: string
+ *                             description:
+ *                               type: string
  */
 export const getAllTeachers = async (req, res) => {
-    try {
-        // Parse and validate query parameters
-        const limit = parseInt(req.query.limit) || 10;
-        const page = parseInt(req.query.page) || 1;
-        const sort = req.query.sort || 'desc';
-        const populate = req.query.populate;
+  const limit = parseInt(req.query.limit) || 10;
+  const page = parseInt(req.query.page) || 1;
 
-        // Validation
-        if (limit < 1 || limit > 100) {
-            return res.status(400).json({ error: 'Limit must be between 1 and 100' });
-        }
-        if (page < 1) {
-            return res.status(400).json({ error: 'Page must be greater than 0' });
-        }
-        if (!['asc', 'desc'].includes(sort)) {
-            return res.status(400).json({ error: 'Sort must be either asc or desc' });
-        }
+  const sort = req.query.sort === 'desc' ? 'DESC' : 'ASC';
+  const allowedSortFields = ['id', 'name', 'department', 'createdAt', 'updatedAt'];
+  const sortBy = allowedSortFields.includes(req.query.sortBy) ? req.query.sortBy : 'id';
 
-        // Build include array for eager loading
-        const includeOptions = [];
-        if (populate) {
-            const populateOptions = populate.split(',').map(p => p.trim());
-            
-            if (populateOptions.includes('courses') || populateOptions.includes('all')) {
-                includeOptions.push({
-                    model: db.Course,
-                    include: [db.Student] // Include students enrolled in courses
-                });
-            }
-        }
+  try {
+    const total = await db.Teacher.count();
 
-        // Build query options
-        const queryOptions = {
-            limit: limit,
-            offset: (page - 1) * limit,
-            order: [['createdAt', sort.toUpperCase()]],
-            ...(includeOptions.length > 0 && { include: includeOptions })
-        };
+    const teachers = await db.Teacher.findAll({
+      limit,
+      offset: (page - 1) * limit,
+      order: [[sortBy, sort]],
+      include: {
+        model: db.Course,
+        attributes: ['id', 'title', 'description'],
+      },
+      attributes: ['id', 'name', 'department', 'createdAt', 'updatedAt'],
+    });
 
-        // Execute queries
-        const total = await db.Teacher.count();
-        const teachers = await db.Teacher.findAll(queryOptions);
-
-        res.json({
-            meta: {
-                totalItems: total,
-                page: page,
-                totalPages: Math.ceil(total / limit),
-                limit: limit
-            },
-            data: teachers,
-        });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
+    res.json({
+      meta: {
+        totalItems: total,
+        page,
+        totalPages: Math.ceil(total / limit),
+      },
+      data: teachers,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 };
+
+
 
 /**
  * @swagger
@@ -159,48 +167,75 @@ export const getAllTeachers = async (req, res) => {
  *       - in: path
  *         name: id
  *         required: true
- *         schema: { type: integer }
- *         description: Teacher ID
- *       - $ref: '#/components/parameters/TeacherPopulateParam'
+ *         schema:
+ *           type: integer
+ *       - in: query
+ *         name: populate
+ *         schema:
+ *           type: string
+ *           enum: [none, courses]
+ *           default: none
+ *         description: >
+ *           Use 'none' to skip courses or 'courses' to include all courses taught by this teacher.
  *     responses:
  *       200:
  *         description: Teacher found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 id:
+ *                   type: integer
+ *                 name:
+ *                   type: string
+ *                 department:
+ *                   type: string
+ *                 createdAt:
+ *                   type: string
+ *                 updatedAt:
+ *                   type: string
+ *                 Courses:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       id:
+ *                         type: integer
+ *                       title:
+ *                         type: string
+ *                       description:
+ *                         type: string
  *       404:
- *         description: Teacher not found
- *       500:
- *         description: Server error
+ *         description: Not found
  */
 export const getTeacherById = async (req, res) => {
-    try {
-        const populate = req.query.populate;
-        
-        // Build include array for eager loading
-        const includeOptions = [];
-        if (populate) {
-            const populateOptions = populate.split(',').map(p => p.trim());
-            
-            if (populateOptions.includes('courses') || populateOptions.includes('all')) {
-                includeOptions.push({
-                    model: db.Course,
-                    include: [db.Student] // Include students enrolled in courses
-                });
-            }
-        }
+  const { id } = req.params;
+  const populate = (req.query.populate || 'none').toLowerCase();
 
-        const queryOptions = {
-            ...(includeOptions.length > 0 && { include: includeOptions })
-        };
+  const include = [];
 
-        const teacher = await db.Teacher.findByPk(req.params.id, queryOptions);
-        if (!teacher) {
-            return res.status(404).json({ message: 'Teacher not found' });
-        }
-        
-        res.json(teacher);
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
+  if (populate === 'courses') {
+    include.push({
+      model: db.Course,
+      attributes: ['id', 'title', 'description'],
+    });
+  }
+
+  try {
+    const teacher = await db.Teacher.findByPk(id, {
+      include,
+      attributes: ['id', 'name', 'department', 'createdAt', 'updatedAt'],
+    });
+
+    if (!teacher) return res.status(404).json({ message: 'Not found' });
+
+    res.json(teacher);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 };
+
 
 /**
  * @swagger
@@ -212,8 +247,8 @@ export const getTeacherById = async (req, res) => {
  *       - in: path
  *         name: id
  *         required: true
- *         schema: { type: integer }
- *         description: Teacher ID
+ *         schema:
+ *           type: integer
  *     requestBody:
  *       required: true
  *       content:
@@ -230,22 +265,21 @@ export const getTeacherById = async (req, res) => {
  *         description: Teacher updated successfully
  *       404:
  *         description: Teacher not found
- *       500:
- *         description: Server error
  */
 export const updateTeacher = async (req, res) => {
-    try {
-        const teacher = await db.Teacher.findByPk(req.params.id);
-        if (!teacher) {
-            return res.status(404).json({ message: 'Teacher not found' });
-        }
-        
-        await teacher.update(req.body);
-        res.json(teacher);
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
+  try {
+    const { id } = req.params;
+    const teacher = await db.Teacher.findByPk(id);
+
+    if (!teacher) return res.status(404).json({ message: 'Not found' });
+
+    await teacher.update(req.body);
+    res.json(teacher);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 };
+
 
 /**
  * @swagger
@@ -257,26 +291,26 @@ export const updateTeacher = async (req, res) => {
  *       - in: path
  *         name: id
  *         required: true
- *         schema: { type: integer }
- *         description: Teacher ID
+ *         schema:
+ *           type: integer
  *     responses:
  *       200:
  *         description: Teacher deleted successfully
  *       404:
  *         description: Teacher not found
- *       500:
- *         description: Server error
  */
 export const deleteTeacher = async (req, res) => {
-    try {
-        const teacher = await db.Teacher.findByPk(req.params.id);
-        if (!teacher) {
-            return res.status(404).json({ message: 'Teacher not found' });
-        }
-        
-        await teacher.destroy();
-        res.json({ message: 'Teacher deleted successfully' });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
+  try {
+    const { id } = req.params;
+    const teacher = await db.Teacher.findByPk(id);
+
+    if (!teacher) {
+      return res.status(404).json({ message: 'Not found' });
     }
+
+    await teacher.destroy();
+    res.json({ message: 'Deleted successfully' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 };

@@ -9,19 +9,6 @@ import db from '../models/index.js';
 
 /**
  * @swagger
- * components:
- *   parameters:
- *     StudentPopulateParam:
- *       in: query
- *       name: populate
- *       schema:
- *         type: string
- *         enum: [courses, all]
- *       description: Include related data (courses or all)
- */
-
-/**
- * @swagger
  * /students:
  *   post:
  *     summary: Create a new student
@@ -36,14 +23,15 @@ import db from '../models/index.js';
  *             properties:
  *               name:
  *                 type: string
+ *                 example: John Doe
  *               email:
  *                 type: string
- *                 format: email
+ *                 example: john.doe@example.com
  *     responses:
  *       201:
  *         description: Student created successfully
  *       500:
- *         description: Server error
+ *         description: Internal server error
  */
 export const createStudent = async (req, res) => {
     try {
@@ -58,90 +46,91 @@ export const createStudent = async (req, res) => {
  * @swagger
  * /students:
  *   get:
- *     summary: Get all students with pagination, sorting, and population
+ *     summary: Get all students
  *     tags: [Students]
  *     parameters:
- *       - in: query
- *         name: limit
- *         schema:
- *           type: integer
- *           default: 10
- *           minimum: 1
- *           maximum: 100
- *         description: Number of records per page
  *       - in: query
  *         name: page
  *         schema:
  *           type: integer
  *           default: 1
- *           minimum: 1
  *         description: Page number
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 10
+ *         description: Number of items per page
  *       - in: query
  *         name: sort
  *         schema:
  *           type: string
  *           enum: [asc, desc]
- *           default: desc
- *         description: Sort order by creation date
- *       - $ref: '#/components/parameters/StudentPopulateParam'
+ *           default: asc
+ *         description: Sort order (asc or desc)
+ *       - in: query
+ *         name: sortBy
+ *         schema:
+ *           type: string
+ *           enum: [id, name, email, createdAt, updatedAt]
+ *           default: id
+ *         description: Sort students by field
+ *       - in: query
+ *         name: populate
+ *         schema:
+ *           type: string
+ *           enum: [none, courses]
+ *           default: none
+ *         description: >
+ *           Select 'none' to include only course IDs,
+ *           or 'courses' to include full course details for enrolled courses.
  *     responses:
  *       200:
  *         description: List of students with metadata
- *       400:
- *         description: Invalid parameters
- *       500:
- *         description: Server error
  */
 export const getAllStudents = async (req, res) => {
+    const limit = parseInt(req.query.limit) || 10;
+    const page = parseInt(req.query.page) || 1;
+
+    const sort = req.query.sort === 'desc' ? 'DESC' : 'ASC';
+    const sortBy = ['id', 'name', 'email', 'createdAt', 'updatedAt'].includes(req.query.sortBy)
+        ? req.query.sortBy
+        : 'id';
+
+    const populate = (req.query.populate || 'none').toLowerCase();
+
+    const include = [];
+
+    if (populate === 'courses') {
+        include.push({
+            model: db.Course,
+            attributes: ['id', 'title', 'description', 'teacherId', 'createdAt', 'updatedAt'],
+            through: { attributes: [] }, // hide join table attributes
+        });
+    } else {
+        include.push({
+            model: db.Course,
+            attributes: ['id'],
+            through: { attributes: [] },
+        });
+    }
+
     try {
-        // Parse and validate query parameters
-        const limit = parseInt(req.query.limit) || 10;
-        const page = parseInt(req.query.page) || 1;
-        const sort = req.query.sort || 'desc';
-        const populate = req.query.populate;
-
-        // Validation
-        if (limit < 1 || limit > 100) {
-            return res.status(400).json({ error: 'Limit must be between 1 and 100' });
-        }
-        if (page < 1) {
-            return res.status(400).json({ error: 'Page must be greater than 0' });
-        }
-        if (!['asc', 'desc'].includes(sort)) {
-            return res.status(400).json({ error: 'Sort must be either asc or desc' });
-        }
-
-        // Build include array for eager loading
-        const includeOptions = [];
-        if (populate) {
-            const populateOptions = populate.split(',').map(p => p.trim());
-            
-            if (populateOptions.includes('courses') || populateOptions.includes('all')) {
-                includeOptions.push({
-                    model: db.Course,
-                    include: [db.Teacher] // Include teacher info in courses for more complete data
-                });
-            }
-        }
-
-        // Build query options
-        const queryOptions = {
-            limit: limit,
-            offset: (page - 1) * limit,
-            order: [['createdAt', sort.toUpperCase()]],
-            ...(includeOptions.length > 0 && { include: includeOptions })
-        };
-
-        // Execute queries
         const total = await db.Student.count();
-        const students = await db.Student.findAll(queryOptions);
+
+        const students = await db.Student.findAll({
+            limit,
+            offset: (page - 1) * limit,
+            order: [[sortBy, sort]],
+            include,
+            attributes: include.length === 0 ? ['id', 'name', 'email', 'createdAt', 'updatedAt'] : undefined,
+        });
 
         res.json({
             meta: {
                 totalItems: total,
-                page: page,
+                page,
                 totalPages: Math.ceil(total / limit),
-                limit: limit
             },
             data: students,
         });
@@ -150,6 +139,8 @@ export const getAllStudents = async (req, res) => {
     }
 };
 
+
+
 /**
  * @swagger
  * /students/{id}:
@@ -157,51 +148,57 @@ export const getAllStudents = async (req, res) => {
  *     summary: Get a student by ID
  *     tags: [Students]
  *     parameters:
- *       - in: path
- *         name: id
+ *       - name: id
+ *         in: path
  *         required: true
- *         schema: { type: integer }
- *         description: Student ID
- *       - $ref: '#/components/parameters/StudentPopulateParam'
+ *         schema:
+ *           type: integer
+ *       - in: query
+ *         name: populate
+ *         schema:
+ *           type: string
+ *           enum: [none, courses]
+ *           default: none
+ *         description: >
+ *           Select 'none' to include only course IDs,
+ *           or 'courses' to include full course details for enrolled courses.
  *     responses:
  *       200:
- *         description: Student found
+ *         description: A student
  *       404:
- *         description: Student not found
+ *         description: Not found
  *       500:
- *         description: Server error
+ *         description: Internal server error
  */
 export const getStudentById = async (req, res) => {
     try {
-        const populate = req.query.populate;
-        
-        // Build include array for eager loading
-        const includeOptions = [];
-        if (populate) {
-            const populateOptions = populate.split(',').map(p => p.trim());
-            
-            if (populateOptions.includes('courses') || populateOptions.includes('all')) {
-                includeOptions.push({
-                    model: db.Course,
-                    include: [db.Teacher] // Include teacher info in courses
-                });
-            }
+        const populate = (req.query.populate || 'none').toLowerCase();
+
+        const include = [];
+
+        if (populate === 'courses') {
+            include.push({
+                model: db.Course,
+                attributes: ['id', 'title', 'description', 'teacherId', 'createdAt', 'updatedAt'],
+            });
+        } else {
+            include.push({
+                model: db.Course,
+                attributes: ['id'],
+                through: { attributes: [] },
+            });
         }
 
-        const queryOptions = {
-            ...(includeOptions.length > 0 && { include: includeOptions })
-        };
+        const student = await db.Student.findByPk(req.params.id, { include });
 
-        const student = await db.Student.findByPk(req.params.id, queryOptions);
-        if (!student) {
-            return res.status(404).json({ message: 'Student not found' });
-        }
-        
+        if (!student) return res.status(404).json({ message: 'Not found' });
+
         res.json(student);
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 };
+
 
 /**
  * @swagger
@@ -210,11 +207,11 @@ export const getStudentById = async (req, res) => {
  *     summary: Update a student
  *     tags: [Students]
  *     parameters:
- *       - in: path
- *         name: id
+ *       - name: id
+ *         in: path
  *         required: true
- *         schema: { type: integer }
- *         description: Student ID
+ *         schema:
+ *           type: integer
  *     requestBody:
  *       required: true
  *       content:
@@ -224,24 +221,22 @@ export const getStudentById = async (req, res) => {
  *             properties:
  *               name:
  *                 type: string
+ *                 example: Jane Doe
  *               email:
  *                 type: string
- *                 format: email
+ *                 example: jane.doe@example.com
  *     responses:
  *       200:
  *         description: Student updated successfully
  *       404:
  *         description: Student not found
  *       500:
- *         description: Server error
+ *         description: Internal server error
  */
 export const updateStudent = async (req, res) => {
     try {
         const student = await db.Student.findByPk(req.params.id);
-        if (!student) {
-            return res.status(404).json({ message: 'Student not found' });
-        }
-        
+        if (!student) return res.status(404).json({ message: 'Not found' });
         await student.update(req.body);
         res.json(student);
     } catch (err) {
@@ -256,28 +251,25 @@ export const updateStudent = async (req, res) => {
  *     summary: Delete a student
  *     tags: [Students]
  *     parameters:
- *       - in: path
- *         name: id
+ *       - name: id
+ *         in: path
  *         required: true
- *         schema: { type: integer }
- *         description: Student ID
+ *         schema:
+ *           type: integer
  *     responses:
  *       200:
  *         description: Student deleted successfully
  *       404:
  *         description: Student not found
  *       500:
- *         description: Server error
+ *         description: Internal server error
  */
 export const deleteStudent = async (req, res) => {
     try {
         const student = await db.Student.findByPk(req.params.id);
-        if (!student) {
-            return res.status(404).json({ message: 'Student not found' });
-        }
-        
+        if (!student) return res.status(404).json({ message: 'Student not found' });
         await student.destroy();
-        res.json({ message: 'Student deleted successfully' });
+        res.status(200).json({ message: 'Student deleted successfully' });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
